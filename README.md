@@ -15,8 +15,8 @@ npx cli-calctool@latest install
 ## 从本仓库安装
 
 ```bash
-git clone https://github.com/88208555/calctool.git
-cd calctool
+git clone https://github.com/88208555/calctool-clitax.git
+cd calctool-clitax
 node install.mjs install        # 自动检测本机已装 IDE 并分发
 node install.mjs check          # 检查已安装 skill 是否有新版本
 node install.mjs update         # 幂等覆盖更新
