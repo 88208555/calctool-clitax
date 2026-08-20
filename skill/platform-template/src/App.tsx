@@ -8,6 +8,7 @@ import { ToolStore } from './store'
 import { authz, OnboardingConsent, type CapabilityKind } from './authz'
 import { defaultPipeline, nodeNeighbors, type EngineDefinition } from './pipeline'
 import engine from './engine-definition.json'
+import './app.css'
 
 const { Title, Paragraph, Text } = Typography
 
@@ -15,6 +16,8 @@ const def = engine as EngineDefinition
 const store = new ToolStore(def.engineId)
 const pipeline = def.pipeline ?? defaultPipeline(def.engineId)
 const onboarding = new OnboardingConsent(def.engineId)
+
+const cardProps = { className: 'platform-template-card' } as const
 
 export default function App() {
   const [form] = Form.useForm()
@@ -116,7 +119,7 @@ export default function App() {
   )
 
   const renderInput = () => (
-    <Card title="录入" style={{ maxWidth: 720, margin: '0 auto' }}>
+    <Card title="录入" {...cardProps}>
       <Form form={form} layout="vertical" onFinish={run}>
         {def.fields.map((f) => (
           <Form.Item
@@ -126,7 +129,7 @@ export default function App() {
             rules={[{ required: Boolean(f.required), message: `请输入${f.label}` }]}
           >
             {['integer', 'number', 'money', 'percent'].includes(f.type)
-              ? <InputNumber style={{ width: '100%' }} placeholder={`请输入${f.label}`} />
+              ? <InputNumber className="platform-template-full-width" placeholder={`请输入${f.label}`} />
               : <Input placeholder={`请输入${f.label}`} />}
           </Form.Item>
         ))}
@@ -136,12 +139,12 @@ export default function App() {
   )
 
   const renderDashboard = () => (
-    <Card title="指标卡" style={{ maxWidth: 720, margin: '0 auto' }}>
-      <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+    <Card title="指标卡" {...cardProps}>
+      <Space direction="vertical" size="middle" className="platform-template-full-width">
         <Button onClick={() => setPage('input')}>返回修改</Button>
         <Space wrap size="large">
           {def.formulas.map((f) => (
-            <Statistic key={f.key} title={f.label} value={results[f.key] ?? '—'} precision={2} valueStyle={{ fontSize: 22 }} />
+            <Statistic key={f.key} title={f.label} value={results[f.key] ?? '—'} precision={2} />
           ))}
         </Space>
         <Text type="secondary">计算基于确定性公式引擎（decimal.js），结果可复现。</Text>
@@ -150,15 +153,15 @@ export default function App() {
   )
 
   const renderPipeline = () => (
-    <Card title="工具链路（整套工具 · 联通节点）" style={{ maxWidth: 720, margin: '0 auto' }}>
-      <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+    <Card title="工具链路（整套工具 · 联通节点）" {...cardProps}>
+      <Space direction="vertical" size="middle" className="platform-template-full-width">
         {pipeline.nodes.map((node) => {
           const neighbors = nodeNeighbors(pipeline, node.id)
           const downstream = neighbors?.downstream.map((n) => n.id).join(' → ') || '（终端）'
           return (
-            <div key={node.id} style={{ border: '1px solid #d9d9d9', borderRadius: 8, padding: 12 }}>
+            <div key={node.id} className="platform-template-node">
               <Space>
-                <Tag color="blue">{node.kind}</Tag>
+                <Tag color="processing">{node.kind}</Tag>
                 <Text strong>{node.label}</Text>
                 <Text type="secondary">→ {downstream}</Text>
               </Space>
@@ -171,7 +174,7 @@ export default function App() {
   )
 
   const renderReport = () => (
-    <Card title="历史记录" style={{ maxWidth: 720, margin: '0 auto' }}>
+    <Card title="历史记录" {...cardProps}>
       <Table<Record<string, unknown>>
         rowKey="id"
         dataSource={history}
@@ -182,19 +185,19 @@ export default function App() {
           { title: '结果', dataIndex: 'results', render: (v: Record<string, unknown>) => JSON.stringify(v) },
         ]}
       />
-      <Button danger style={{ marginTop: 16 }} onClick={() => { if (ensureAuthz('storage', '清空本地历史记录')) { store.clear(); setHistory([]) } }}>清空历史</Button>
+      <Button danger className="platform-template-clear" onClick={() => { if (ensureAuthz('storage', '清空本地历史记录')) { store.clear(); setHistory([]) } }}>清空历史</Button>
     </Card>
   )
 
   const renderAuthz = () => (
-    <Card title="授权管理" style={{ maxWidth: 720, margin: '0 auto' }}>
+    <Card title="授权管理" {...cardProps}>
       <Table<ReturnType<typeof authz.list>[number]>
         rowKey="capability"
         dataSource={authz.list()}
         pagination={false}
         columns={[
           { title: '能力', dataIndex: 'capability', render: (v: CapabilityKind) => authz.label(v) },
-          { title: '状态', dataIndex: 'granted', render: (v: boolean) => (v ? <Tag color="green">已授权</Tag> : <Tag>未授权</Tag>) },
+          { title: '状态', dataIndex: 'granted', render: (v: boolean) => (v ? <Tag color="success">已授权</Tag> : <Tag>未授权</Tag>) },
           { title: '授权时间', dataIndex: 'grantedAt', render: (v: string) => new Date(v).toLocaleString() },
           { title: '操作', render: (_, r) => <Button size="small" danger onClick={() => { authz.revoke(r.capability); setPage('authz') }}>撤销</Button> },
         ]}
@@ -203,12 +206,12 @@ export default function App() {
   )
 
   return (
-    <div style={{ maxWidth: 960, margin: '0 auto', padding: '32px 16px' }}>
-      <Title level={2} style={{ textAlign: 'center' }}>{def.name}</Title>
-      <Paragraph type="secondary" style={{ textAlign: 'center' }}>
+    <div className="platform-template-shell">
+      <Title level={2}>{def.name}</Title>
+      <Paragraph type="secondary" className="platform-template-subtitle">
         引擎 ID：{def.engineId} · 整套工具（{pipeline.nodes.length} 个联通节点）· 配置驱动
       </Paragraph>
-      <div style={{ textAlign: 'center', marginBottom: 24 }}>
+      <div className="platform-template-segmented">
         <Segmented
           value={page}
           onChange={(v) => setPage(String(v))}

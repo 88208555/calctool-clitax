@@ -1,27 +1,21 @@
 {
-  "name": "cli-calctool",
-  "version": "0.1.0",
-  "description": "calctool + blueprint 多 IDE 安装器：从 cli.tax 自动拉取并分发到本机所有已装 IDE（Codex/DSH/Claude/Cursor/…）。支持 check 更新检测。",
-  "type": "module",
   "bin": {
-    "cli-calctool": "install.mjs"
+    "cli-calctool": "./cli.mjs"
   },
+  "description": "Calctool skill installer for CLI.Tax: generate a runnable online calculator from a domain need.",
   "files": [
-    "install.mjs",
-    "sources.json",
-    "skills"
+    "cli.mjs",
+    "README.md",
+    "skill/SKILL.md",
+    "skill/skill.json"
   ],
-  "engines": {
-    "node": ">=18"
+  "license": "UNLICENSED",
+  "name": "cli-calctool",
+  "private": false,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/88208555/calctool-clitax.git"
   },
-  "license": "MIT",
-  "keywords": [
-    "blueprint",
-    "skill",
-    "cli.tax",
-    "clitax",
-    "codex",
-    "agent",
-    "installer"
-  ]
+  "type": "module",
+  "version": "5.0.2"
 }

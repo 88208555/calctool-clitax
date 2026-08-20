@@ -1,0 +1,38 @@
+/* calctool 平台模板样式：禁止内联样式与硬编码颜色，全部走 class 化 + CSS 变量定义 */
+.platform-template-shell {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 32px 16px;
+}
+
+.platform-template-shell h2 {
+  text-align: center;
+}
+
+.platform-template-subtitle {
+  text-align: center;
+}
+
+.platform-template-segmented {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.platform-template-card {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.platform-template-full-width {
+  width: 100%;
+}
+
+.platform-template-node {
+  border: 1px solid var(--platform-node-border, #d9d9d9);
+  border-radius: var(--platform-node-radius, 8px);
+  padding: 12px;
+}
+
+.platform-template-clear {
+  margin-top: 16px;
+}
