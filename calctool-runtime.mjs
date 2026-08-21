@@ -11,7 +11,7 @@ const ALLOWED_EXTERNAL_ENDPOINTS = {
 };
 const COORDINATOR_SCHEMA = "calctool.coordinator.run-plan/1.0";
 const COMPILER_NAME = "calctool";
-const COMPILER_VERSION = "v5.0.2";
+const COMPILER_VERSION = "v5.0.3";
 const DEFAULT_MAX_RESPONSE_BYTES = 200_000;
 
 const PURE_OPERATIONS = new Set(["capabilities", "help", "intake", "validate", "compile-inline"]);
