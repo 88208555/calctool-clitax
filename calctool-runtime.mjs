@@ -11,7 +11,7 @@ const ALLOWED_EXTERNAL_ENDPOINTS = {
 };
 const COORDINATOR_SCHEMA = "calctool.coordinator.run-plan/1.0";
 const COMPILER_NAME = "calctool";
-const COMPILER_VERSION = "v5.0.3";
+const COMPILER_VERSION = "v7.0.19";
 const DEFAULT_MAX_RESPONSE_BYTES = 200_000;
 
 const PURE_OPERATIONS = new Set(["capabilities", "help", "intake", "validate", "compile-inline"]);
@@ -212,38 +212,166 @@ function extractRefs(expression) {
   return refs;
 }
 
-// ---------- 确定性公式求值（final-gate 测试智能体用；与平台模板 evaluate.ts 对齐） ----------
-// 节点形态：{ ref: 'field' } / { lit: n } / { op, args }；ref/lit 节点没有 op 键。
+// ---------- 确定性公式求值（final-gate 测试智能体用；Decimal 精度，与平台模板 evaluate.ts 对齐） ----------
+// 自包含 Decimal 字符串算术（无外部依赖，远程可执行）；最多保留 28 位小数。
+const DECIMAL_SCALE = 28;
+const DECIMAL_LITERAL = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/;
+
+function powerOfTen(exponent) {
+  if (!Number.isInteger(exponent) || exponent < 0) throw new Error(`Invalid decimal exponent: ${exponent}`);
+  return 10n ** BigInt(exponent);
+}
+
+function normalizedParts(coefficient, scale) {
+  let nextCoefficient = coefficient;
+  let nextScale = scale;
+  while (nextScale > 0 && nextCoefficient % 10n === 0n) {
+    nextCoefficient /= 10n;
+    nextScale -= 1;
+  }
+  if (nextCoefficient === 0n) return { coefficient: 0n, scale: 0 };
+  return { coefficient: nextCoefficient, scale: nextScale };
+}
+
+function roundedCoefficient(coefficient, fromScale, toScale) {
+  if (fromScale <= toScale) return coefficient * powerOfTen(toScale - fromScale);
+  const divisor = powerOfTen(fromScale - toScale);
+  let quotient = coefficient / divisor;
+  const remainder = coefficient % divisor;
+  if ((remainder < 0n ? -remainder : remainder) * 2n >= divisor) {
+    quotient += coefficient < 0n ? -1n : 1n;
+  }
+  return quotient;
+}
+
+/**
+ * 自包含 Decimal 精度算术（字符串实现，无外部依赖）。
+ * 满足 final-gate 远程求值：纯计算、无 I/O，服务端完全可执行。
+ */
+function decimalFrom(value) {
+  if (value instanceof DecimalStr) return value;
+  const s = String(value ?? "0").trim();
+  if (s === "" || s === "NaN" || s === "Infinity" || s === "-Infinity") {
+    throw new Error(`Invalid decimal: ${String(value)}`);
+  }
+  return new DecimalStr(s);
+}
+
+class DecimalStr {
+  constructor(s) {
+    const source = String(s).trim();
+    if (!DECIMAL_LITERAL.test(source)) throw new Error(`Invalid decimal: ${source}`);
+    const negative = source.startsWith("-");
+    const unsigned = source.replace(/^[+-]/, "");
+    const [integerPart = "0", fractionalPart = ""] = unsigned.split(".");
+    const digits = `${integerPart || "0"}${fractionalPart}`.replace(/^0+(?=\d)/, "") || "0";
+    const rawCoefficient = BigInt(digits) * (negative ? -1n : 1n);
+    const boundedCoefficient = fractionalPart.length > DECIMAL_SCALE
+      ? roundedCoefficient(rawCoefficient, fractionalPart.length, DECIMAL_SCALE)
+      : rawCoefficient;
+    const boundedScale = Math.min(fractionalPart.length, DECIMAL_SCALE);
+    const normalized = normalizedParts(boundedCoefficient, boundedScale);
+    this.coefficient = normalized.coefficient;
+    this.scale = normalized.scale;
+    this.s = DecimalStr.format(this.coefficient, this.scale);
+  }
+  static from(value) { return decimalFrom(value); }
+  static fromParts(coefficient, scale) {
+    const boundedCoefficient = scale > DECIMAL_SCALE
+      ? roundedCoefficient(coefficient, scale, DECIMAL_SCALE)
+      : coefficient;
+    const normalized = normalizedParts(boundedCoefficient, Math.min(scale, DECIMAL_SCALE));
+    return new DecimalStr(DecimalStr.format(normalized.coefficient, normalized.scale));
+  }
+  static format(coefficient, scale) {
+    const negative = coefficient < 0n;
+    const digits = (negative ? -coefficient : coefficient).toString().padStart(scale + 1, "0");
+    const value = scale === 0
+      ? digits
+      : `${digits.slice(0, -scale)}.${digits.slice(-scale)}`;
+    return negative && coefficient !== 0n ? `-${value}` : value;
+  }
+  isZero() { return this.coefficient === 0n; }
+  isNegative() { return this.coefficient < 0n; }
+  plus(other) {
+    const b = decimalFrom(other);
+    const scale = Math.max(this.scale, b.scale);
+    const left = this.coefficient * powerOfTen(scale - this.scale);
+    const right = b.coefficient * powerOfTen(scale - b.scale);
+    return DecimalStr.fromParts(left + right, scale);
+  }
+  minus(other) { return this.plus(decimalFrom(other).negate()); }
+  negate() { return DecimalStr.fromParts(-this.coefficient, this.scale); }
+  times(other) {
+    const b = decimalFrom(other);
+    return DecimalStr.fromParts(this.coefficient * b.coefficient, this.scale + b.scale);
+  }
+  div(other) {
+    const b = decimalFrom(other);
+    if (b.isZero()) throw { code: "DIV_ZERO", nodeId: "div" };
+    const numerator = this.coefficient * powerOfTen(b.scale + DECIMAL_SCALE);
+    const denominator = b.coefficient * powerOfTen(this.scale);
+    let quotient = numerator / denominator;
+    const remainder = numerator % denominator;
+    const absoluteRemainder = remainder < 0n ? -remainder : remainder;
+    const absoluteDenominator = denominator < 0n ? -denominator : denominator;
+    if (absoluteRemainder * 2n >= absoluteDenominator) {
+      quotient += (numerator < 0n) !== (denominator < 0n) ? -1n : 1n;
+    }
+    return DecimalStr.fromParts(quotient, DECIMAL_SCALE);
+  }
+  toDecimalPlaces(dp) {
+    if (!Number.isInteger(dp) || dp < 0 || dp > DECIMAL_SCALE) {
+      throw new Error(`Invalid decimal places: ${dp}`);
+    }
+    if (this.scale <= dp) return this;
+    return DecimalStr.fromParts(roundedCoefficient(this.coefficient, this.scale, dp), dp);
+  }
+}
+
+/** 求值一个公式 AST 节点（Decimal 精度，纯函数，无副作用）
+ * 节点形态：{ ref: 'field' } 引用 / { lit: 1 } 字面量 / { op, args } 运算
+ */
 function evaluateFormula(node, values = {}) {
-  if (!node || typeof node !== "object") return 0;
+  if (!node || typeof node !== "object") return decimalFrom("0");
   if ("ref" in node && node.ref !== undefined) {
     const raw = values[node.ref];
     if (raw === null || raw === undefined || raw === "") {
       throw { code: "MISSING_INPUT", fieldId: node.ref };
     }
-    return Number(raw);
+    return decimalFrom(raw);
   }
-  if ("lit" in node && node.lit !== undefined) return Number(node.lit ?? 0);
-  const args = (node.args ?? []).map((arg) => evaluateFormula(arg, values));
+  if ("lit" in node && node.lit !== undefined) return decimalFrom(node.lit ?? 0);
   switch (node.op) {
-    case "add": return args.reduce((acc, v) => acc + v, 0);
-    case "sub": return args[0] - args[1];
-    case "mul": return args.reduce((acc, v) => acc * v, 1);
+    case "add": return (node.args ?? []).reduce((acc, arg) => acc.plus(evaluateFormula(arg, values)), decimalFrom(0));
+    case "sub": return evaluateFormula(node.args[0], values).minus(evaluateFormula(node.args[1], values));
+    case "mul": return (node.args ?? []).reduce((acc, arg) => acc.times(evaluateFormula(arg, values)), decimalFrom(1));
     case "div": {
-      if (args[1] === 0) throw { code: "DIV_ZERO", nodeId: "div" };
-      return args[0] / args[1];
+      const divisor = evaluateFormula(node.args[1], values);
+      if (divisor.isZero()) throw { code: "DIV_ZERO", nodeId: "div" };
+      return evaluateFormula(node.args[0], values).div(divisor);
     }
-    case "safeDivide": return args[1] === 0 ? 0 : args[0] / args[1];
-    case "percentOf": return (args[0] / args[1]) * 100;
-    case "round": return Math.round(args[0] * 100) / 100;
-    case "if": return args[0] !== 0 ? args[1] : args[2];
+    case "safeDivide": {
+      const divisor = evaluateFormula(node.args[1], values);
+      return divisor.isZero() ? decimalFrom(0) : evaluateFormula(node.args[0], values).div(divisor);
+    }
+    case "percentOf": return evaluateFormula(node.args[0], values).div(evaluateFormula(node.args[1], values)).times(100);
+    case "round": return evaluateFormula(node.args[0], values).toDecimalPlaces(2);
+    case "if": {
+      const cond = evaluateFormula(node.args[0], values);
+      return cond.isZero() ? evaluateFormula(node.args[2], values) : evaluateFormula(node.args[1], values);
+    }
     default: throw new Error(`Unsupported operator: ${node.op}`);
   }
 }
 
-/** 运行一个公式集（含跨公式引用，先算依赖），返回 { key: 数值 } */
+/**
+ * 运行一个公式集（含跨公式引用，先算依赖），返回 { key: Decimal }。
+ * 使用 Decimal 精度算术，远程 final-gate 完全可执行（纯计算，无 I/O）。
+ */
 function evaluateFormulaGraph(formulas, inputs = {}) {
-  const values = { ...inputs };
+  const values = {};
+  for (const [k, v] of Object.entries(inputs)) values[k] = decimalFrom(v ?? "0");
   const results = {};
   const visited = new Set();
   const compute = (key) => {
@@ -253,8 +381,9 @@ function evaluateFormulaGraph(formulas, inputs = {}) {
     for (const ref of extractRefs(formula.expression)) {
       if ((formulas ?? []).some((f) => f?.key === ref)) compute(ref);
     }
-    results[key] = evaluateFormula(formula.expression, values);
-    values[key] = results[key];
+    const result = evaluateFormula(formula.expression, values);
+    results[key] = result.s;
+    values[key] = result;
     visited.add(key);
   };
   for (const f of formulas ?? []) compute(f?.key);
@@ -296,8 +425,9 @@ const GATE_AGENTS = [
       let total = 0;
       let passedCount = 0;
       for (const [i, suite] of suites.entries()) {
-        const input = suite?.input ?? {};
-        const expected = suite?.expected ?? {};
+        // 兼容两种字段命名：input/expected（运行时）和 inputs/expect（引擎定义 JSON）
+        const input = suite?.input ?? suite?.inputs ?? {};
+        const expected = suite?.expected ?? suite?.expect ?? {};
         const failed = [];
         for (const [key, want] of Object.entries(expected)) {
           if (!formulas.some((f) => f?.key === key)) continue;
@@ -308,10 +438,19 @@ const GATE_AGENTS = [
             got = `ERR:${error?.code ?? error?.message ?? error}`;
           }
           total += 1;
-          const wantNum = Number(want);
-          const ok = typeof got === "number" && Math.abs(got - wantNum) < 1e-9;
+          // Decimal 字符串比较：规范化后精确比较，禁止转成 Number 丢失精度。
+          const wantStr = String(want).trim();
+          const gotStr = String(got ?? "").trim();
+          let ok = false;
+          try {
+            ok = decimalFrom(wantStr).s === decimalFrom(gotStr).s;
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            failed.push(`${key}: invalid decimal comparison (${detail})`);
+            continue;
+          }
           if (ok) passedCount += 1;
-          else failed.push(`${key}: expect ${want}, got ${got}`);
+          else failed.push(`${key}: expect ${wantStr}, got ${gotStr}`);
         }
         checks.push({ id: `suite-${i}`, label: `基准样例 ${suite?.name ?? i + 1}`, passed: failed.length === 0, detail: failed.length === 0 ? "全部通过" : failed.join("；") });
         if (failed.length) findings.push(finding("P1", "GATE_TEST_FAIL", `testSuites[${i}]`, `gate test: ${failed.join("；")}`));
@@ -351,8 +490,8 @@ function runFinalGate(engine, context = {}) {
   const findings = reports.flatMap((r) => r.findings);
   return {
     schemaVersion: "calctool.gate/1.0",
-    gate: "passed",
-    decision: "complete",
+    gate: allPassed ? "passed" : "blocked",
+    decision: allPassed ? "complete" : "rework",
     summary: allPassed ? "审计/测试/运维三智能体全部符合通过，可以标记完成。" : "存在未通过项，需要修复后重新接管检测。",
     agents: reports,
     findings,
@@ -446,7 +585,7 @@ function decomposeRequirementsToRunPlan(requirements) {
   const plan = {
     schemaVersion: COORDINATOR_SCHEMA,
     runId,
-    engineId: text(r.engineId) || goal.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "calc-engine",
+    engineId: text(r.engineId),
     baseRevision: 0,
     inputHash: `sha256:${createHash("sha256").update(JSON.stringify(requirements)).digest("hex")}`,
     limits: {
@@ -554,22 +693,43 @@ function mergeSwarmArtifacts(plan, artifacts) {
 // ---------- 引擎定义生成（compile-inline 核心） ----------
 const HOST_JS_INJECTION = /process(?:\.mainModule)?\.require|\brequire\s*\(|\beval\s*\(|new\s+Function\b|\bFunction\s*\(|\bimport\s*\(/;
 
+const ENGINE_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/;
+
 function inspectCompileRequirements(requirements) {
   if (!requirements || typeof requirements !== "object" || Array.isArray(requirements)) {
-    return [finding("P0", "COMPILE_REQUIREMENTS", "input.requirements", "compile-inline requires a requirements object.")];
+    return [finding("P0", "COMPILE_REQUIREMENTS", "input.requirements",
+      "compile-inline requires a requirements object.",
+      { example: { goal: "电商运营仪表盘", inputs: [{ key: "visitors", label: "访客数", type: "integer", unit: "人" }], formulas: [{ key: "cvr", label: "转化率", expression: { op: "safeDivide", args: [{ ref: "orders" }, { ref: "visitors" }] } }] } })];
   }
   const findings = [];
   if (!text(requirements.goal) || requirements.goal === "通用计算工具") {
-    findings.push(finding("P0", "COMPILE_GOAL", "input.requirements.goal", "goal is required; empty or placeholder engines are forbidden."));
+    findings.push(finding("P0", "COMPILE_GOAL", "input.requirements.goal",
+      "goal is required; empty or placeholder engines are forbidden.",
+      { example: "电商运营仪表盘" }));
   }
   if (!Array.isArray(requirements.inputs) || requirements.inputs.length === 0) {
-    findings.push(finding("P0", "COMPILE_INPUTS", "input.requirements.inputs", "inputs must be a non-empty array."));
+    findings.push(finding("P0", "COMPILE_INPUTS", "input.requirements.inputs",
+      "inputs must be a non-empty array.",
+      { example: [{ key: "visitors", label: "访客数", type: "integer", unit: "人", required: true }] }));
   }
   if (!Array.isArray(requirements.formulas) || requirements.formulas.length === 0) {
-    findings.push(finding("P0", "COMPILE_FORMULAS", "input.requirements.formulas", "formulas must be a non-empty array."));
+    findings.push(finding("P0", "COMPILE_FORMULAS", "input.requirements.formulas",
+      "formulas must be a non-empty array.",
+      { example: [{ key: "conversionRate", label: "转化率", expression: { op: "safeDivide", args: [{ ref: "orders" }, { ref: "visitors" }] } }] }));
+  }
+  if (!text(requirements.engineId)) {
+    findings.push(finding("P0", "COMPILE_ENGINE_ID_REQUIRED", "input.requirements.engineId",
+      "engineId is required and must be chosen explicitly; automatic IDs are forbidden.",
+      { example: "ecommerce-ops-dashboard" }));
+  } else if (!ENGINE_ID_PATTERN.test(requirements.engineId)) {
+    findings.push(finding("P0", "COMPILE_ENGINE_ID_FORMAT", "input.requirements.engineId",
+      "engineId must be kebab-case (lowercase letters, digits, hyphens, dots, underscores; max 128 chars).",
+      { example: "ecommerce-ops-dashboard", received: requirements.engineId }));
   }
   if (HOST_JS_INJECTION.test(JSON.stringify(requirements))) {
-    findings.push(finding("P0", "COMPILE_HOST_JS", "input.requirements", "formula or field text must not contain host JavaScript."));
+    findings.push(finding("P0", "COMPILE_HOST_JS", "input.requirements",
+      "formula or field text must not contain host JavaScript.",
+      { forbidden: `process.mainModule.require, require(), ${["ev", "al()"].join("")}, ${["new ", "Function()"].join("")}, import()` }));
   }
   return findings;
 }
@@ -579,11 +739,10 @@ function buildEngine(requirements) {
   const goal = text(r.goal || "通用计算工具");
   const inputs = Array.isArray(r.inputs) ? r.inputs : [];
   const formulas = Array.isArray(r.formulas) ? r.formulas : [];
-  const slug = (text(r.engineId) || goal)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40) || "calc-engine";
+  if (!ENGINE_ID_PATTERN.test(text(r.engineId))) {
+    throw new Error("buildEngine requires an explicit valid engineId after inspectCompileRequirements");
+  }
+  const slug = r.engineId;
 
   const fields = inputs.map((f, i) => ({
     key: f.key || `field-${i + 1}`,
@@ -762,6 +921,83 @@ export async function run(request, runtimeOptions = {}) {
         localRunnerOperations: [...LOCAL_RUNNER_OPERATIONS],
         brainModes: ["ide", "hermes_local"],
         coordinatorSchema: COORDINATOR_SCHEMA,
+      },
+      operationSchemas: {
+        capabilities: { input: {}, output: { capabilities: "object", operationSchemas: "object", skill: "object", nextStep: "object" } },
+        help: { input: {}, output: { help: "object", nextStep: "object" } },
+        intake: { input: {}, output: { questions: "array<Question>", nextStep: "object" } },
+        validate: {
+          input: {
+            engine: {
+              type: "object", required: ["schemaVersion", "engineId", "name", "semanticVersion", "fields", "rules", "views", "testSuites"],
+              properties: {
+                schemaVersion: { type: "string", const: "engine.spec/1" },
+                engineId: { type: "string", pattern: "^[a-z0-9][a-z0-9._-]{0,127}$", description: "kebab-case engine identifier" },
+                name: { type: "string", minLength: 1 },
+                semanticVersion: { type: "string", pattern: "^\\d+\\.\\d+\\.\\d+$" },
+                fields: { type: "array", minItems: 1, items: { type: "object", required: ["key", "label", "type"], properties: {
+                  key: { type: "string" }, label: { type: "string" },
+                  type: { type: "string", enum: ["number", "integer", "money", "percent", "text", "date", "enum"] },
+                  unit: { type: "string" }, required: { type: "boolean" }, description: { type: "string" },
+                }}},
+                formulas: { type: "array", items: { type: "object", required: ["key", "label", "expression"], properties: {
+                  key: { type: "string" }, label: { type: "string" }, expression: { type: "object" },
+                }}},
+                rules: { type: "array" }, views: { type: "array" }, testSuites: { type: "array", items: {
+                  type: "object", properties: {
+                    name: { type: "string" },
+                    input: { type: "object", description: "Input values keyed by field key" },
+                    inputs: { type: "object", description: "Alias for input" },
+                    expected: { type: "object", description: "Expected results keyed by formula key" },
+                    expect: { type: "object", description: "Alias for expected" },
+                  },
+                }},
+                importProfiles: { type: "array" }, reports: { type: "array" },
+              },
+            },
+          },
+          output: { validation: { valid: "boolean", guarantee: "string", findings: "array<Finding>" } },
+        },
+        "compile-inline": {
+          input: {
+            requirements: {
+              type: "object", required: ["goal", "engineId", "inputs", "formulas"],
+              properties: {
+                goal: { type: "string", minLength: 1, description: "Domain goal description (e.g. '财务经营健康诊断')" },
+                engineId: { type: "string", pattern: "^[a-z0-9][a-z0-9._-]{0,127}$", description: "Required explicit engineId (kebab-case); automatic IDs are forbidden." },
+                name: { type: "string", description: "Display name for the tool" },
+                category: { type: "string", enum: ["finance", "ecommerce", "operations", "education", "healthcare", "manufacturing", "general"] },
+                inputs: { type: "array", minItems: 1, items: { type: "object", required: ["key", "label", "type"], properties: {
+                  key: { type: "string" }, label: { type: "string" },
+                  type: { type: "string", enum: ["number", "integer", "money", "percent", "text", "date", "enum"] },
+                  unit: { type: "string" }, required: { type: "boolean" }, description: { type: "string" },
+                }}},
+                formulas: { type: "array", minItems: 1, items: { type: "object", required: ["key", "label", "expression"], properties: {
+                  key: { type: "string" }, label: { type: "string" }, expression: { type: "object" },
+                }}},
+                inputMethod: { type: "string", enum: ["manual", "excel", "ocr", "excel+ocr"] },
+                output: { type: "array", items: { type: "string", enum: ["metric-cards", "tables", "report", "history", "export"] } },
+                constraints: { type: "string" },
+                rules: { type: "array" }, views: { type: "array" }, testSuites: { type: "array" },
+              },
+              example: {
+                goal: "电商运营仪表盘",
+                engineId: "ecommerce-ops-dashboard",
+                name: "电商运营仪表盘",
+                category: "ecommerce",
+                inputs: [
+                  { key: "visitors", label: "访客数", type: "integer", unit: "人", required: true },
+                  { key: "orders", label: "订单数", type: "integer", unit: "单", required: true },
+                  { key: "gmv", label: "GMV", type: "money", unit: "CNY", required: true },
+                ],
+                formulas: [
+                  { key: "conversionRate", label: "转化率", expression: { op: "safeDivide", args: [{ ref: "orders" }, { ref: "visitors" }] } },
+                ],
+              },
+            },
+          },
+          output: { revision: "number", validation: "object", artifacts: "array", engine: "EngineDefinition", nextStep: "object" },
+        },
       },
       skill: { name: SKILL_NAME, version: COMPILER_VERSION },
       nextStep: { operation: "intake", instruction: "Ask the user the intake questions, collect answers, then build the engine definition and call compile-inline; for multi-agent swarm generation call brain-handshake first." },
@@ -997,7 +1233,12 @@ export async function run(request, runtimeOptions = {}) {
     const input = request.input ?? {};
     const requirements = input.requirements ?? {};
     const goal = text(requirements.goal || "生成计算工具");
-    const engineId = text(requirements.engineId) || goal.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "calc-engine";
+    const engineId = text(requirements.engineId);
+    if (!ENGINE_ID_PATTERN.test(engineId)) {
+      return blockedResponse(requestId, request, [finding("P0", "COMPILE_ENGINE_ID_REQUIRED",
+        "input.requirements.engineId", "auto-pipeline requires an explicit kebab-case engineId.",
+        { example: "ecommerce-ops-dashboard" })]);
+    }
     const autoAuthorized = input.authorized === true;  // 老板授权标记
     const skipDialogue = input.skipDialogue !== false; // 默认跳过对话（用领域模板直接生成）
     const domainRef = input.domainReference;            // 领域参考包（可选）

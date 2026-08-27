@@ -6,7 +6,7 @@ const ERROR_SCHEMA = "calctool.skill.error/1.0";
 const ENGINE_SCHEMA = "engine.spec/1";
 const COORDINATOR_SCHEMA = "calctool.coordinator.run-plan/1.0";
 const COMPILER_NAME = "calctool";
-const COMPILER_VERSION = "v1.0.5";
+const COMPILER_VERSION = "v6.0.0";
 const DEFAULT_MAX_RESPONSE_BYTES = 200_000;
 
 const PURE_OPERATIONS = new Set(["capabilities", "help", "intake", "validate", "compile-inline"]);
@@ -282,7 +282,7 @@ function decomposeRequirementsToRunPlan(requirements) {
   const plan = {
     schemaVersion: COORDINATOR_SCHEMA,
     runId,
-    engineId: text(r.engineId) || goal.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "calc-engine",
+    engineId: text(r.engineId),
     baseRevision: 0,
     inputHash: `sha256:${createHash("sha256").update(JSON.stringify(requirements)).digest("hex")}`,
     limits: {
@@ -393,13 +393,9 @@ function buildEngine(requirements) {
   const goal = text(r.goal);
   const inputs = Array.isArray(r.inputs) ? r.inputs : [];
   const formulas = Array.isArray(r.formulas) ? r.formulas : [];
-  const slug = (text(r.engineId) || goal)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40);
-  if (!goal || !slug) {
-    throw new Error("buildEngine requires goal after inspectCompileRequirements");
+  const slug = text(r.engineId);
+  if (!goal || !validId(slug)) {
+    throw new Error("buildEngine requires goal and an explicit valid engineId after inspectCompileRequirements");
   }
 
   const fields = inputs.map((f, i) => ({

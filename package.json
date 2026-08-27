@@ -8,7 +8,12 @@
     "installer.mjs",
     "README.md",
     "skill/SKILL.md",
-    "skill/skill.json"
+    "skill/skill.json",
+    "skill/references/engine-meta-model.md",
+    "skill/references/formula-dsl.md",
+    "skill/references/declarative-pages.md",
+    "skill/references/import-ocr.md",
+    "skill/references/finance-example.md"
   ],
   "license": "UNLICENSED",
   "name": "cli-calctool",
@@ -18,5 +23,5 @@
     "url": "https://github.com/88208555/calctool-clitax.git"
   },
   "type": "module",
-  "version": "5.0.4"
+  "version": "7.0.19"
 }

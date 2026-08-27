@@ -1,10 +1,10 @@
 {
-  "description": "Calctool 按需生成可执行、可验证、可发布的在线计算工具。用户用一句话说明领域需求，例如财务经营健康诊断、报价测算或指标看板；技能通过对话逐项确认指标定义、公式逻辑、输入方式与输出形式，禁止把未确认的口径写成假完成。生成结果支持自定义指标、自定义公式，以及用户上传内容的自动识别：表格字段映射与图片文字识别，最终输出可复核的计算报告。调用顺序为 capabilities、intake、validate、compile-inline，校验未通过不得发布。密钥与模型若需要，一律在对话中由用户自行填写，平台不发放密钥、不代持免费额度，也不在描述里展示外部申请网址。工具必须能被再次运行，并在同一套规则下得到同一结论。公式、口径与样本数据全部可追溯；缺字段、映射失败或识别失败必须显式报错，不得用空表或占位数字冒充计算结果。发布前须完成确定性校验，未通过即停止。本技能面向真实交付：每一步都有输入、规则与失败面，禁止把加载中、超时或未知状态当成空成功。用户可见说明只讲能力与对话配置方式，不出现外链。调用前必须先走 capabilities，再按 nextStep 前进；必填项未回答不得进入下一操作。日志只保存必要元数据，密钥不得写入公开页面。",
+  "description": "Calctool 生成可验证的确定性计算引擎与在线工具工程合同。调用方必须显式提供 engineId；公式由受控 AST 与十进制定点运行时执行，final-gate 会真实计算基准样例并拒绝不一致结果。当前 Excel 映射和图片 OCR 仅定义 importProfiles 合同，执行器为 planned/not_installed；网页版校验器也尚未接入，禁止把这些能力描述成已完成。仓库平台模板的计算历史通过本地 SQLite API 持久化，但 compile-tool 仍需本地执行层落地工程文件。调用顺序为 capabilities、intake、validate、compile-inline；校验未通过不得发布，错误必须显式返回。",
   "displayName": "Calctool",
   "endpoint": "https://cli.tax/KKyA6xljUX",
   "method": "POST",
   "name": "calctool",
   "schemaVersion": "calctool.skill.request/1.0",
   "type": "Skill",
-  "version": "v5.0.4"
+  "version": "v7.0.19"
 }
