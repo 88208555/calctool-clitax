@@ -7,11 +7,11 @@
     "cli.mjs",
     "installer.mjs",
     "broker.mjs",
-    "calctool-local-runner.mjs",
-    "calctool-runtime.mjs",
     "README.md",
     "skill/SKILL.md",
     "skill/skill.json",
+    "calctool-local-runner.mjs",
+    "calctool-runtime.mjs",
     "skill/references/engine-meta-model.md",
     "skill/references/formula-dsl.md",
     "skill/references/declarative-pages.md",
@@ -20,11 +20,10 @@
   ],
   "license": "UNLICENSED",
   "name": "cli-calctool",
-  "private": false,
   "repository": {
     "type": "git",
     "url": "https://github.com/88208555/calctool-clitax.git"
   },
   "type": "module",
-  "version": "7.0.25"
+  "version": "7.0.28"
 }
