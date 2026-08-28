@@ -11,7 +11,7 @@ const ALLOWED_EXTERNAL_ENDPOINTS = {
 };
 const COORDINATOR_SCHEMA = "calctool.coordinator.run-plan/1.0";
 const COMPILER_NAME = "calctool";
-const COMPILER_VERSION = "v7.0.19";
+const COMPILER_VERSION = "v7.0.25";
 const DEFAULT_MAX_RESPONSE_BYTES = 200_000;
 
 const PURE_OPERATIONS = new Set(["capabilities", "help", "intake", "validate", "compile-inline"]);
@@ -1285,26 +1285,21 @@ export async function run(request, runtimeOptions = {}) {
 
   // 完成前门禁：审计/测试/运维 三智能体协调接管检测，全部符合通过才标记完成
   if (operation === "final-gate") {
-    const input = request.input ?? {};
-    const engine = input.engine ?? {};
-    const context = {
-      probe: input.probe,
-      adapted: input.adapted,
-      runtimeOptions,
-    };
-    const gate = runFinalGate(engine, context);
-    if (!gate.passed) {
-      return blockedResponse(requestId, request, gate.findings);
-    }
-    const digest = createHash("sha256").update(JSON.stringify(engine)).digest("hex");
     return okResponse(requestId, {
-      status: "complete",
-      gate,
-      revision: Number(input.revision) || 1,
-      validation: { valid: true, guarantee: "completion-gate-green", findings: [] },
-      artifacts: input.artifacts ?? [],
-      digest,
-      nextStep: { operation: "run", instruction: "三智能体（审计/测试/运维）全部符合通过，项目标记完成：启动服务并弹出工具页面。" },
+      status: "incomplete",
+      gate: {
+        schemaVersion: "calctool.gate/1.0",
+        gate: "incomplete",
+        decision: "local-runner-required",
+        passed: false,
+        findings: [],
+      },
+      validation: { valid: false, guarantee: "local-runner-required", findings: [] },
+      localRunner: {
+        required: true,
+        command: "cli-calctool final-gate <repositoryRoot> <enginePath>",
+      },
+      nextStep: { operation: "final-gate", instruction: "Run the bundled local final-gate against the engine file; remote JSON cannot issue a completion verdict." },
     });
   }
 

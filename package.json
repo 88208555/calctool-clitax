@@ -6,6 +6,9 @@
   "files": [
     "cli.mjs",
     "installer.mjs",
+    "broker.mjs",
+    "calctool-local-runner.mjs",
+    "calctool-runtime.mjs",
     "README.md",
     "skill/SKILL.md",
     "skill/skill.json",
@@ -23,5 +26,5 @@
     "url": "https://github.com/88208555/calctool-clitax.git"
   },
   "type": "module",
-  "version": "7.0.19"
+  "version": "7.0.25"
 }

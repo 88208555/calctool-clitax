@@ -2,6 +2,7 @@
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dispatchOfficialSkillCli, runIntakeHandshake } from './installer.mjs'
+import { runLocalFinalGate } from './calctool-local-runner.mjs'
 
 const INTAKE_QUESTIONS = [
   {
@@ -42,14 +43,33 @@ const INTAKE_QUESTIONS = [
   },
 ]
 
-await dispatchOfficialSkillCli({
-  packageRoot: dirname(fileURLToPath(import.meta.url)),
-  runCommand: (context) => runIntakeHandshake(context, {
-    questions: INTAKE_QUESTIONS,
-    outputFile: 'CALCTOOL-REQUIREMENTS.json',
-    afterCapabilities(output) {
-      const instruction = output.nextStep?.instruction
-      if (typeof instruction === 'string' && instruction.trim()) console.log(instruction)
-    },
-  }),
-})
+const command = process.argv[2] ?? 'help'
+if (command === 'final-gate') {
+  try {
+    const result = await runLocalFinalGate({
+      repositoryRoot: process.argv[3],
+      enginePath: process.argv[4],
+    })
+    console.log(JSON.stringify(result))
+    process.exitCode = result.status === 'complete' ? 0 : 2
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error))
+    process.exitCode = 1
+  }
+} else {
+  await dispatchOfficialSkillCli({
+    packageRoot: dirname(fileURLToPath(import.meta.url)),
+    extraUsageLines: [
+      'Trusted local completion gate:',
+      '  cli-calctool final-gate <repositoryRoot> <enginePath>',
+    ],
+    runCommand: (context) => runIntakeHandshake(context, {
+      questions: INTAKE_QUESTIONS,
+      outputFile: 'CALCTOOL-REQUIREMENTS.json',
+      afterCapabilities(output) {
+        const instruction = output.nextStep?.instruction
+        if (typeof instruction === 'string' && instruction.trim()) console.log(instruction)
+      },
+    }),
+  })
+}

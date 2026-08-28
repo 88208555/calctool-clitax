@@ -5,7 +5,7 @@ description: '按需生成确定性计算引擎与在线计算工具工程合同
 
 # calctool
 
-Package version: v7.0.19
+Package version: v7.0.25
 
 把「业务计算逻辑」编译为「可执行的在线计算工具」的生成器。
 
@@ -69,12 +69,12 @@ After `capabilities`, read `officialCatalog`. Default allowlist is official skil
 | 编号 | 状态 | 当前边界 |
 |------|------|----------|
 | C1 engineId | implemented | `compile-inline`、`compile-tool` 与蜂群计划要求调用方显式传入合法 engineId；缺失或格式错误直接阻断，禁止从需求文本自动截取。 |
-| C2 final-gate 求值 | implemented-in-source | 公式基准样例由远端纯计算运行时真实求值，使用 BigInt coefficient + scale 的 28 位十进制定点实现；错误 expected（包括伪造 0）会阻断。公开端点需在版本资产同步后才获得本源码修复。 |
+| C2 final-gate 求值 | local-runner-required | 远端 `final-gate` 固定返回 `incomplete + local-runner-required`，绝不返回可被误解的完成结论。本地 runner 从真实仓库读取引擎并以 BigInt coefficient + scale 的 28 位十进制定点求值；错误 expected（包括伪造 0）会阻断。 |
 | C3 Excel / OCR | planned / not-installed | `inputMethod` 与 `importProfiles` 只是引擎合同；当前没有 Excel 解析器或 OCR 执行器，不得宣称已自动导入。 |
 | C4 网页校验器 | planned / not-installed | 已有 `validate` API；尚无管理后台网页版粘贴校验器。 |
 | C5 SQLite 历史 | partial | 仓库内平台模板已通过本地 API 读写 better-sqlite3，计算历史不再使用 localStorage；`compile-tool` 仍只返回工程文件清单，实际模板落地依赖本地执行层。 |
 
-`final-gate` 的公式测试是远端真实执行；其中 Ops 项只检查调用方提供的环境探测与命令配置是否完整，**不会远程执行 install/run 命令**。需要命令执行证据时必须交给本地 runner 或独立 Validator。
+调用远端 `final-gate` 只能得到未完成状态。真实公式门禁必须执行 `cli-calctool final-gate <repositoryRoot> <enginePath>`；其中 Ops 项只检查本机环境探测与命令配置是否完整，**不会执行 install/run 命令**。需要命令执行证据时必须交给独立 Validator。
 
 ## 五步实施流程
 
@@ -121,11 +121,11 @@ defaultLocale: zh-CN
 ### 5. 验收与发布
 - validate：确定性校验引擎定义（引用闭合、无环、单位一致、测试通过）
 - 上传识别当前只定义导入 Profile；Excel/OCR 执行器为 `planned/not_installed`，接入前不得生成自动导入成功结论
-- **完成前门禁（final-gate）**：每次项目完成之前，审计/测试/运维三智能体协调接管检测——
+- **完成前门禁（final-gate）**：远端仅返回 `incomplete + local-runner-required`；每次项目完成之前必须由本地 runner 读取真实引擎并执行检测——
   - **审计智能体**：引擎定义确定性校验 0 findings、公式仅走受控 AST（禁 eval）、引用闭合
   - **测试智能体**：基准样例（testSuites）全部通过，一个不过都不放行
   - **运维智能体**：只对调用方提供的环境探测、依赖分级和命令配置做声明性检查；不远程执行安装/启动命令
-  - 三智能体全部符合通过（gate passed）才标记完成；任一未通过返回 findings，修复后重新接管检测
+  - 本地审计、测试和运维配置检查全部符合才返回 gate passed；任一未通过返回 findings，修复后重新检测
 - 发布为版本化引擎，任何公式/字段/阈值变化都创建新版本，不原地修改
 - 输出：可运行的在线工具 + 引擎定义包 + 验收报告 + 完成前门禁结论
 
@@ -190,15 +190,15 @@ defaultLocale: zh-CN
 - 不虚构后端数据；未接入能力显示真实状态
 - 财务/税务输出需明确"经营估算模型，生产使用前由专业人员复核"
 
-## 反馈通道
+## 受限调用与自动评价闭环
 
-评价只能由 IDE / 智能体自动回传，严禁人类干预：
+- IDE / 智能体必须通过本包 `invoke` 或 JSON-stdin `broker` 调用，不得直接拼装技能 HTTP 请求，也不得读取 BrainClient token。
+- broker 从 `CLITAX_BRAIN_CLIENT_TOKEN_FILE` 读取身份；macOS/Linux 文件必须为当前 broker 账户所有且权限 `0600`，Windows 文件必须位于受限 `%LOCALAPPDATA%\CLI.Tax\broker` 目录。
+- broker 只需要 Brain Client HTTPS、受限身份文件和调用方显式传入的路径，本身不需要完整磁盘访问。若要保证 IDE 无法读取身份文件，必须把 broker 放进独立低权限系统账户或沙箱服务，并只暴露受限 IPC；broker 与 IDE 同账户运行时，`0600` 不能隔离二者，禁止声称令牌已隔离。
+- broker 只用 `Authorization: BrainClient …` 发起一次 runtime 请求。HTTP 成功后必须保留响应顶层原始 `feedbackReceiptId`、`feedbackInvocationId` 和 `feedbackEvaluation.digest`，不得生成、猜测、复用或跨调用转移。
+- Brain Client 服务端必须严格绑定请求/响应的 `requestId` 和 `schemaVersion`，再根据真实状态、验证结果、服务端耗时与 findings 生成并持久化权威评分、评语和摘要。broker 不得生成分数或评语。
+- 同一次 runtime 请求在服务端事务内生成并持久化评价，再返回 `feedbackReceiptId`、`feedbackInvocationId` 和权威摘要；broker 只验证已提交回执，不发起第二次评价写入。`not-reported`、验证不完整、P0/P1 findings、`blocked` 或 `failed` 都不得生成好评。
+- 缺少凭证或 ID、身份不匹配、摘要不匹配、响应非法以及任何 HTTP 失败都必须显式失败，不得静默、不重试成重复评价。
+- 本地 CLI 不提供手工评分或评语提交命令，人类不得选择技能分数或填写技能评价；日常聊天不属于评价协议。
 
-1. 仅当一次真实技能 HTTP 调用成功，并且响应顶层包含 `feedbackInvocationId` 时，调用方才可进入评价流程。
-2. 调用方必须使用本次响应的原始 ID，按真实执行结果生成整数分数（0–100）和真实评语，再自动执行：
-   `npx cli-calctool@latest feedback <feedbackInvocationId> <score> <comment...>`
-3. 自动回传必须使用会员中心 Brain 客户端生成的同一身份文件，并通过 `CLITAX_BRAIN_CLIENT_TOKEN_FILE` 指向该 `0600` 文件；服务端以会员账号实名入库，不接受匿名评价。
-4. 禁止伪造、猜测、复用或跨调用转移 `feedbackInvocationId`；禁止让人类选择分数、填写评价或代为执行命令。
-5. 缺少会员客户端身份或 ID、分数越界、空评语、响应不合法及任何 HTTP 失败都必须视为回传失败，不得记为成功。
-
-日常交流走技能详情页的独立聊天通道，不使用 `feedback` 命令，也不计入评价、评分或首页跑马灯。
+调用示例：`npx cli-calctool@latest invoke <operation> '<JSON对象>'`。IDE 集成可向 `npx cli-calctool@latest broker` 的 stdin 发送 `{"operation":"capabilities","input":{}}`。
