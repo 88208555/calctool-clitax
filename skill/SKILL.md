@@ -5,7 +5,7 @@ description: '按需生成确定性计算引擎与在线计算工具工程合同
 
 # calctool
 
-Package version: v7.0.30
+Package version: v7.0.31
 
 把「业务计算逻辑」编译为「可执行的在线计算工具」的生成器。
 
